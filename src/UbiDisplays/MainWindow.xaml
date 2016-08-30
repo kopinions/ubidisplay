@@ -11,7 +11,6 @@
         Closed="Window_Closed" Icon="/UbiDisplays;component/Interface/Images/Projector.png">
     <Grid Name="_Wrapper">
         <DockPanel LastChildFill="True" >
-
             <!-- STATUS BAR -->
             <StatusBar DockPanel.Dock="Bottom" Background="Transparent">
                 <StatusBarItem DockPanel.Dock="Right">
@@ -61,7 +60,7 @@
                         </StackPanel>
                     </TabItem.Header>
                 
-                    <!-- Content -->
+                    <!-- Content -->    
                     <StackPanel Name="_Step1">
                         <ubicontrols:ExplanationPanel Title="Select your projector" Explanation="Each screen in the list below corresponds to a screen plugged into the computer.  Please click on the one which is your projector." />
                         <Border Background="#f5f5f5" Height="100" Margin="5 0 5 0" BorderBrush="Gray" CornerRadius="1" BorderThickness="1">

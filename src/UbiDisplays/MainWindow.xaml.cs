@@ -1,31 +1,20 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
-using System.Text;
-
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
 using System.Windows.Shapes;
-using System.Windows.Threading;
-using System.Windows.Interop;
-
-using System.Xml;
 using System.Xml.Linq;
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Runtime.InteropServices;
-
 using Microsoft.Kinect;
 using Awesomium.Core;
-using Awesomium.Windows;
-
 using UbiDisplays.Interface.Controls;
 using UbiDisplays.Model;
 
@@ -388,7 +377,7 @@ namespace UbiDisplays
         {
             // If we have selected a Kinect and a Projector and both are working.
             if (SelectedScreen == null) return;
-            if (SelectedKinect == null || SelectedKinect.IsRunning == false) return;
+            if (SelectedKinect == null || SelectedKinect.IsAvailable == false) return;
             if (OutputWindow == null || OutputWindow.Visibility == System.Windows.Visibility.Hidden) return;
             
             // Enable step 2.
@@ -638,7 +627,7 @@ namespace UbiDisplays
                     catch (Exception pError)
                     {
                         DeactivateKinect();
-                        Model.Log.Write(String.Format("Cannot select Kinect: {0}", value.DeviceConnectionId) + "Error: " + pError.Message, "Application", Model.Log.Type.AppWarning);
+                        Model.Log.Write(String.Format("Cannot select Kinect: {0}", value.UniqueKinectId) + "Error: " + pError.Message, "Application", Model.Log.Type.AppWarning);
                         MessageBox.Show(pError.Message, this.Title, MessageBoxButton.OK, MessageBoxImage.Exclamation, MessageBoxResult.OK);
                     }
                 }
@@ -650,7 +639,7 @@ namespace UbiDisplays
                     if (pKinectControl != null)
                     {
                         pKinectControl.Opacity = 0.6;
-                        if (value != null && pKinectControl.SensorDeviceConnectionID == value.DeviceConnectionId)
+                        if (value != null && pKinectControl.SensorDeviceConnectionID == value.UniqueKinectId)
                             pKinectControl.Opacity = 1.0;
                     }
                 }
@@ -665,7 +654,9 @@ namespace UbiDisplays
             // Store the UUID of the currently connected one.
             String sConnected = null;
             if (SelectedKinect != null)
-                sConnected = SelectedKinect.DeviceConnectionId;
+            {
+                sConnected = SelectedKinect.UniqueKinectId;
+            }
 
             // De-activate the current sensor.
             DeactivateKinect();
@@ -674,7 +665,8 @@ namespace UbiDisplays
             _Kinects.Children.Clear();
 
             // Get a list of monitors.
-            if (KinectSensor.KinectSensors == null || KinectSensor.KinectSensors.Count == 0)
+            var kinectSensor = KinectSensor.GetDefault();
+            if (kinectSensor == null || !kinectSensor.IsAvailable)
             {
                 MessageBox.Show("Your computer is not reporting that any Kinects are attached.");
                 Model.Log.Write("Your computer is not reporting any attached Kinects.", "Application", Model.Log.Type.AppError);
@@ -683,18 +675,25 @@ namespace UbiDisplays
 
             // Loop through and place them in the list.
             int iSensor = 0;
-            foreach (var pSensor in KinectSensor.KinectSensors)
+            List<KinectSensor> kinectSensors = new List<KinectSensor>()
+            {
+                kinectSensor
+            };
+          
+
+           
+            foreach (var pSensor in kinectSensors)
             {
                 // Write in the log.
-                Model.Log.Write(String.Format("Detected Kinect: {0}", pSensor.DeviceConnectionId), "Application", Model.Log.Type.AppInfo);
+                Model.Log.Write(String.Format("Detected Kinect: {0}", pSensor.UniqueKinectId), "Application", Model.Log.Type.AppInfo);
 
                 // Create the Kinect control.
-                var pKinectControl = new UbiDisplays.Interface.Controls.KinectConrol();
-                pKinectControl.lblName.Content = "K" + (++iSensor) + " " + pSensor.Status;
-                pKinectControl.SensorDeviceConnectionID = pSensor.DeviceConnectionId;
+                var pKinectControl = new KinectConrol();
+                pKinectControl.lblName.Content = "K" + (++iSensor) + " " + pSensor.IsAvailable;
+                pKinectControl.SensorDeviceConnectionID = pSensor.UniqueKinectId;
 
                 // Bind click events.
-                if (pSensor.Status == KinectStatus.Connected)
+                if (pSensor.IsAvailable)
                 {
                     pKinectControl.MouseLeftButtonUp += (object sender, MouseButtonEventArgs e) =>
                     {
@@ -705,7 +704,7 @@ namespace UbiDisplays
                         TryCompleteStep1();
 
                         // Say which screen we selected.
-                        Model.Log.Write(String.Format("Selected Kinect: {0}", pSensor.DeviceConnectionId), "Application", Model.Log.Type.AppInfo);
+                        Model.Log.Write(String.Format("Selected Kinect: {0}", pSensor.UniqueKinectId), "Application", Model.Log.Type.AppInfo);
                     };
 
                     // Add it to the list.
@@ -714,14 +713,14 @@ namespace UbiDisplays
                     // If this is our only sensor, select it ready.
                     if (Properties.Settings.Default.AutoSelectKinect)
                     {
-                        if (KinectSensor.KinectSensors.Count == 1)
+                        if (kinectSensors.Count == 1)
                         {
                             ActivateKinect(pSensor);
                         }
                     }
 
                     // If it was the previously connected sensor, then select it.
-                    if (sConnected == pSensor.DeviceConnectionId)
+                    if (sConnected == pSensor.UniqueKinectId)
                     {
                         ActivateKinect(pSensor);
                     }
@@ -2115,7 +2114,7 @@ namespace UbiDisplays
 
                 // Write monitor and kinect ID.
                 xCalibration.Add(new XElement("monitor", SelectedScreen.DeviceName));
-                xCalibration.Add(new XElement("kinect", KinectProcessor.Sensor.DeviceConnectionId));
+                xCalibration.Add(new XElement("kinect", KinectProcessor.Sensor.UniqueKinectId));
 
                 // Write the source homography.
                 var xSource = new XElement("kinectimage",
@@ -2277,7 +2276,7 @@ namespace UbiDisplays
                     if (SelectedKinect != null)
                     {
                         // If the device names are the same, all is well.
-                        if (SelectedKinect.DeviceConnectionId != dCalibration.KinectDevice)
+                        if (SelectedKinect.UniqueKinectId != dCalibration.KinectDevice)
                         {
                             // We have one selected already, log and bail.
                             Log.Write("Kinect already selected.  Ignoring '" + dCalibration.KinectDevice + "'.", "Application", Log.Type.AppWarning);
@@ -2291,10 +2290,13 @@ namespace UbiDisplays
                     else
                     {
                         // Attempt to find a montor with a matching device name.
-                        var lAvailable = KinectSensor.KinectSensors;
+                        var lAvailable = new List<KinectSensor>()
+                        {
+                           KinectSensor.GetDefault()
+                        };
                         foreach (var pKinect in lAvailable)
                         {
-                            if (pKinect.DeviceConnectionId == dCalibration.KinectDevice)
+                            if (pKinect.UniqueKinectId == dCalibration.KinectDevice)
                             {
                                 SelectedKinect = pKinect;
                                 TryCompleteStep1(false);

@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading;
 
 using System.Windows;
@@ -126,22 +124,21 @@ namespace UbiDisplays.Model
         /// <summary>
         /// A buffer which contains the pixel data for the depth frame.  One entry for each depth pixel.
         /// </summary>
-        private DepthImagePixel[] tDepthPixels = null;
+
+        private DepthSpacePoint[] tDepthSpacePoints = null;
 
         /// <summary>
         /// A buffer which contains the skeleton points as derived from each depth point.  One entry for each depth pixel.
         /// </summary>
-        private SkeletonPoint[] tDepthToSkeleton = null;
+        private CameraSpacePoint[] tDepthToSkeleton = null;
 
         /// <summary>
         /// A buffer which contains the index buffer which maps depth points onto to colour points.  One entry for each depth pixel.
         /// </summary>
-        
-        
-        private ColorImagePoint[] tDepthToColourIB = null;
+        private ColorSpacePoint[] _tDepthToColourIb = null;
 
 
-        /// <summary>
+        ///<summary>
         /// The width of the depth processing frame.
         /// </summary>
         private int iDepthWidth = 0;
@@ -302,47 +299,44 @@ namespace UbiDisplays.Model
             #region Sensor Setup and Buffer Creation
             // Set the reference on the sensor.
             this.pSensor = pSensor;
-            this.pSensor.AllFramesReady += Handle_AllFramesReady;
-            
-            // Enable the streams we are interested in.
-            pSensor.ColorStream.Enable(ColorImageFormat.RgbResolution640x480Fps30);
-            pSensor.DepthStream.Enable(DepthImageFormat.Resolution320x240Fps30);
+//            this.pSensor.AllFramesReady += Handle_AllFramesReady;
             
             // Work out the maximum amount of pixels we will need to process.
-            var iMaxDepthPixelCount = pSensor.DepthStream.FrameWidth * pSensor.DepthStream.FrameHeight;
+            var _iMaxDepthPixelCount = pSensor.DepthFrameSource.FrameDescription.Width * pSensor.DepthFrameSource.FrameDescription.Height;
+           
 
             // Create double buffers for the interface pixels and point cloud.
-            pInterfacePixels = new Utilities.DoubleBuffer<byte[]>(new byte[iMaxDepthPixelCount * 4], new byte[iMaxDepthPixelCount * 4]);
+            pInterfacePixels = new Utilities.DoubleBuffer<byte[]>(new byte[_iMaxDepthPixelCount * 4], new byte[_iMaxDepthPixelCount * 4]);
             pPointCloud = new Utilities.DoubleBuffer<Utilities.Triple<int, SlimMath.Vector3[], int[]>>(
-                new Utilities.Triple<int, SlimMath.Vector3[], int[]>(0, new SlimMath.Vector3[iMaxDepthPixelCount], new int[iMaxDepthPixelCount]),
-                new Utilities.Triple<int, SlimMath.Vector3[], int[]>(0, new SlimMath.Vector3[iMaxDepthPixelCount], new int[iMaxDepthPixelCount])
+                new Utilities.Triple<int, SlimMath.Vector3[], int[]>(0, new SlimMath.Vector3[_iMaxDepthPixelCount], new int[_iMaxDepthPixelCount]),
+                new Utilities.Triple<int, SlimMath.Vector3[], int[]>(0, new SlimMath.Vector3[_iMaxDepthPixelCount], new int[_iMaxDepthPixelCount])
                 );
 
             // Create buffers (each is the size of the depth stream * 4bpp where necessary).
-            tDepthPixels     = new DepthImagePixel[iMaxDepthPixelCount];
-            tDepthToColourIB = new ColorImagePoint[iMaxDepthPixelCount];
-            tDepthToSkeleton = new SkeletonPoint[iMaxDepthPixelCount];
+            tDepthSpacePoints     = new DepthSpacePoint[_iMaxDepthPixelCount];
+            _tDepthToColourIb = new ColorSpacePoint[_iMaxDepthPixelCount];
+            tDepthToSkeleton = new CameraSpacePoint[_iMaxDepthPixelCount];
 
             // Create a buffer for the colour video feed (the size of the colour stream * 4bpp).
-            tColourPixels     = new byte[pSensor.ColorStream.FramePixelDataLength];
+            tColourPixels     = new byte[pSensor.ColorFrameSource.FrameDescription.LengthInPixels];
 
             // Setup stream properties.
-            this.iDepthWidth  = pSensor.DepthStream.FrameWidth;
-            this.iDepthHeight = pSensor.DepthStream.FrameHeight;
-            this.iColourWidth  = pSensor.ColorStream.FrameWidth;
-            this.iColourHeight = pSensor.ColorStream.FrameHeight;
+            this.iDepthWidth  = pSensor.DepthFrameSource.FrameDescription.Width;
+            this.iDepthHeight = pSensor.DepthFrameSource.FrameDescription.Height;
+            this.iColourWidth  = pSensor.ColorFrameSource.FrameDescription.Width;
+            this.iColourHeight = pSensor.ColorFrameSource.FrameDescription.Height;
             this.iColourToDepthDivisor = this.iColourWidth / this.iDepthWidth;
 
             // If we have not got an enabled pixel array, make one.
             if (this._EnabledPixels == null)
-                this._EnabledPixels = new System.Collections.BitArray(iMaxDepthPixelCount, true);
+                this._EnabledPixels = new System.Collections.BitArray(_iMaxDepthPixelCount, true);
             #endregion
 
             // Reset the FPS counter.
             _FPSCounter.Reset();
 
             // Start the sensor.
-            this.pSensor.Start();
+            this.pSensor.Open();
 
             // Set our flag to be active.
             bActive = true;
@@ -381,15 +375,20 @@ namespace UbiDisplays.Model
 
             #region Sensor shutdown and buffer removal
             // Unhook the events.
-            this.pSensor.AllFramesReady -= Handle_AllFramesReady;
-            this.pSensor.Stop();
+//            this.pSensor.AllFramesReady -= Handle_AllFramesReady;
+            var _reader = this.pSensor.OpenMultiSourceFrameReader(FrameSourceTypes.Color |
+                                             FrameSourceTypes.Depth |
+                                             FrameSourceTypes.Infrared |
+                                             FrameSourceTypes.Body);
+            _reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
+            this.pSensor.Close();
 
             // Remove the buffers.
             pInterfacePixels = null;
             pPointCloud = null;
-            tDepthPixels = null;
-            tDepthToColourIB = null;
-            tDepthToSkeleton = null;
+            tDepthSpacePoints = null;
+            _tDepthToColourIb = null;
+//            tDepthToSkeleton = null;
             tColourPixels = null;
 
             // Remove the reference to the sensor.
@@ -403,6 +402,11 @@ namespace UbiDisplays.Model
             mControlMutex.ReleaseMutex();
         }
 
+        private void Reader_MultiSourceFrameArrived(object sender, MultiSourceFrameArrivedEventArgs e)
+        {
+            throw new NotImplementedException();
+        }
+
 
         /// <summary>
         /// Process the new frame of data from the Kinect.
@@ -410,189 +414,188 @@ namespace UbiDisplays.Model
         /// <remarks>Don't put too much processing here if possible because we can't get another frame until this one has finished.</remarks>
         /// <param name="sender">The sensor which raised the event.</param>
         /// <param name="e">The event which contains the frame data.</param>
-        private void Handle_AllFramesReady(object sender, AllFramesReadyEventArgs e)
-        {
-            //if (pProcessingThread != null)
-            //    Console.WriteLine("Processing Thread = " + pProcessingThread.Name);
-
-            #region Get control data.
-            // Acquire the control mutex.
-            mControlMutex.WaitOne();
-
-            // If we are not active, bail.
-            if ((!bActive) || (this.pSensor == null) || (!this.pSensor.IsRunning))
-            {
-                mControlMutex.ReleaseMutex();
-                return;
-            }
-
-            // Copy out control values.
-            var eRenderStrategy = this.eRenderStrategy;
-            var tBitArray = this._EnabledPixels;
-            var tRenderPlane = this._CalibrationPlane;
-            // - max and min colour controls
-            
-
-            // Release the control mutex.
-            mControlMutex.ReleaseMutex();
-            #endregion
-            
-            // Lock access to the image buffer to write into.
-            //pInterfacePixels.LockNext();
-            //pPointCloud.LockNext();
-
-            #region Depth Map Processing
-            // Open the depth frame.
-            using (DepthImageFrame pDepthFrame = e.OpenDepthImageFrame())
-            {
-                // If the frame is not present, bail.
-                if (pDepthFrame != null)
-                {
-                    // Copy the depth data into a buffer.
-                    pDepthFrame.CopyDepthImagePixelDataTo(tDepthPixels);
-
-                    // Acquire access to the coordinate map lock.
-                    mIndexLock.WaitOne();
-
-                    // Compute the index buffer which will get us the depth->colour pixel mapping.
-                    pSensor.CoordinateMapper.MapDepthFrameToColorFrame(pSensor.DepthStream.Format, tDepthPixels, pSensor.ColorStream.Format, tDepthToColourIB);
-
-                    // Map each depth pixel to a 3D point.
-                    pSensor.CoordinateMapper.MapDepthFrameToSkeletonFrame(pSensor.DepthStream.Format, tDepthPixels, tDepthToSkeleton);
-
-                    // Copy the colour pixels - if we are using the colour render strategy.
-                    if (eRenderStrategy == RenderStrategy.ColourAndErrors)
-                    {
-                        using (ColorImageFrame pColourFrame = e.OpenColorImageFrame())
-                        {
-                            // Block copy the colour data into our buffer so we can pull out what we need later.
-                            if (pColourFrame != null)
-                                pColourFrame.CopyPixelDataTo(tColourPixels);
-                        }
-                    }
-
-                    // Release access.
-                    mIndexLock.ReleaseMutex();
-
-                    // Lock access to the image buffer to write into.
-                    pInterfacePixels.LockNext();
-                    pPointCloud.LockNext();
-
-                    // Bring the interface pixel and point cloud array into scope.
-                    var tInterfacePixels = pInterfacePixels.Next;
-                    var iPointCloudCount = 0; // Store in pPointCloud.Next.First;
-                    var tPointCloud = pPointCloud.Next.Second;
-                    var tPointCloudPixelIndex = pPointCloud.Next.Third;
-
-                    // For each pixel in the depth image.
-                    DepthImagePixel pDepthPixel;
-                    int iInterfacePtr = 0;
-                    for (int i = 0, n = pDepthFrame.Width * pDepthFrame.Height; i < n; ++i)
-                    {
-                        // Address the depth pixel.
-                        pDepthPixel = tDepthPixels[i];
-                        iInterfacePtr = i * 4;
-
-                        // If the depth is not known - skip.
-                        if (!pDepthPixel.IsKnownDepth)
-                        {
-                            tInterfacePixels[iInterfacePtr + 0] = 0xFF;
-                            tInterfacePixels[iInterfacePtr + 1] = 0xFF;
-                            tInterfacePixels[iInterfacePtr + 2] = 0xFF;
-                            continue;
-                        }
-                        //else if (pDepthPixel.Depth == pSensor.DepthStream.TooFarDepth)
-                        //{
-                        //}
-                        //else if (pDepthPixel.Depth == pSensor.DepthStream.TooNearDepth)
-                        //{
-                        //}
-
-                        // Is this pixel marked as ignored?
-                        else if (!tBitArray.Get(i))
-                        {
-                            Utilities.ColourUtils.Greyscale(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
-                            tInterfacePixels[iInterfacePtr + 2] = 0xCC; // Add a red-tint to the ignored greyscale regions.
-                        }
-                        
-
-                        // This pixel is a valid, normal pixel.  Process with a render stratergy.
-                        else
-                        {
-                            // Add the 3D pixel to the point cloud list.
-                            tPointCloud[iPointCloudCount].X = tDepthToSkeleton[i].X;
-                            tPointCloud[iPointCloudCount].Y = tDepthToSkeleton[i].Y;
-                            tPointCloud[iPointCloudCount].Z = tDepthToSkeleton[i].Z;
-                            tPointCloudPixelIndex[iPointCloudCount] = iInterfacePtr;
-                            iPointCloudCount++;
-
-
-                            // Select what we put in the image buffer based on the render stratergy.
-                            switch (eRenderStrategy)
-                            {
-                                case RenderStrategy.ColourAndErrors:
-                                    {
-                                        ColorImagePoint pColourIndex = tDepthToColourIB[i];
-                                        int iColorInDepthX = pColourIndex.X / this.iColourToDepthDivisor;
-                                        int iColorInDepthY = pColourIndex.Y / this.iColourToDepthDivisor;
-                                        if (iColorInDepthX > 0 && iColorInDepthX < iDepthWidth && iColorInDepthY >= 0 && iColorInDepthY < iDepthHeight)
-                                        {
-                                            var iIdx = (pColourIndex.X + (pColourIndex.Y * iColourWidth)) * 4;
-                                            tInterfacePixels[iInterfacePtr + 0] = tColourPixels[iIdx + 0];
-                                            tInterfacePixels[iInterfacePtr + 1] = tColourPixels[iIdx + 1];
-                                            tInterfacePixels[iInterfacePtr + 2] = tColourPixels[iIdx + 2];
-                                        }
-                                        else
-                                        {
-                                            // Write white.
-                                            tInterfacePixels[iInterfacePtr + 0] = 0xFF;
-                                            tInterfacePixels[iInterfacePtr + 1] = 0xFF;
-                                            tInterfacePixels[iInterfacePtr + 2] = 0xFF;
-                                        }
-                                    }
-                                    break;
-                                case RenderStrategy.GrayscaleDepth:
-                                    Utilities.ColourUtils.Greyscale(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
-                                    break;
-                                case RenderStrategy.RGBDepth:
-                                    Utilities.ColourUtils.FauxColourRGB(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
-                                    break;
-                                case RenderStrategy.RGBDepthRelative:
-                                    Utilities.ColourUtils.FauxColourRGB(Utilities.RatcliffPlane.Distance(tPointCloud[iPointCloudCount], tRenderPlane), 0, 3.0, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
-                                    break;
-                            }
-                        }
-
-                        // Store the point cloud count.
-                        pPointCloud.Next.First = iPointCloudCount;
-                    }
-
-                    // Release access to the image and point cloud buffer.
-                    pInterfacePixels.UnlockNextAndFlip();   // WARNING - this may wait for the UI thread to finsih reading.
-                    pPointCloud.UnlockNextAndFlip();        // WARNING - this may wait for the point cloud thread to finsih reading.
-                }
-            }
-            #endregion
-
-            // Release access to the image buffer.
-            //pInterfacePixels.UnlockNextAndFlip();   // WARNING - this may wait for the UI thread to finsih reading.
-            //pPointCloud.UnlockNextAndFlip();        // WARNING - this may wait for the point cloud thread to finsih reading.
-
-            // Raise the event which says we are done.
-            if (OnFrameReady != null)
-                OnFrameReady(this);
-
-            // Signal that the frame has been processed.
-            _FPSCounter.NewFrame();
-
-            // Signal that we have begun streaming.
-            if (!bStreamedFirstFrame)
-            {
-                bStreamedFirstFrame = true;
-                if (OnKinectStreamingStarted != null)
-                    OnKinectStreamingStarted(this);
-            }
-        }
+//        private void Handle_AllFramesReady(object sender, AllFramesReadyEventArgs e)
+//        {
+//            //if (pProcessingThread != null)
+//            //    Console.WriteLine("Processing Thread = " + pProcessingThread.Name);
+//
+//            #region Get control data.
+//            // Acquire the control mutex.
+//            mControlMutex.WaitOne();  
+//
+//            // If we are not active, bail.
+//            if ((!bActive) || (this.pSensor == null) || (!this.pSensor.IsAvailable))
+//            {
+//                mControlMutex.ReleaseMutex();
+//                return;
+//            }
+//
+//            // Copy out control values.
+//            var eRenderStrategy = this.eRenderStrategy;
+//            var tBitArray = this._EnabledPixels;
+//            var tRenderPlane = this._CalibrationPlane;
+//            // - max and min colour controls
+//            
+//
+//            // Release the control mutex.
+//            mControlMutex.ReleaseMutex();
+//            #endregion
+//            
+//            // Lock access to the image buffer to write into.
+//            //pInterfacePixels.LockNext();
+//            //pPointCloud.LockNext();
+//
+//            #region Depth Map Processing
+//            // Open the depth frame.
+//            using (DepthImageFrame pDepthFrame = e.OpenDepthImageFrame())
+//            {
+//                // If the frame is not present, bail.
+//                if (pDepthFrame != null)
+//                {
+//                    // Copy the depth data into a buffer.
+//                    pDepthFrame.CopyDepthImagePixelDataTo(tDepthPixels);
+//
+//                    // Acquire access to the coordinate map lock.
+//                    mIndexLock.WaitOne();
+//
+//                    // Compute the index buffer which will get us the depth->colour pixel mapping.
+//                    pSensor.CoordinateMapper.MapDepthFrameToColorFrame(pSensor.DepthStream.Format, tDepthPixels, pSensor.ColorStream.Format, _tDepthToColourIb);
+//
+//                    // Map each depth pixel to a 3D point.
+//                    pSensor.CoordinateMapper.MapDepthFrameToSkeletonFrame(pSensor.DepthStream.Format, tDepthPixels, tDepthToSkeleton);
+//
+//                    // Copy the colour pixels - if we are using the colour render strategy.
+//                    if (eRenderStrategy == RenderStrategy.ColourAndErrors)
+//                    {
+//                        using (ColorImageFrame pColourFrame = e.OpenColorImageFrame())
+//                        {
+//                            // Block copy the colour data into our buffer so we can pull out what we need later.
+//                            if (pColourFrame != null)
+//                                pColourFrame.CopyPixelDataTo(tColourPixels);
+//                        }
+//                    }
+//
+//                    // Release access.
+//                    mIndexLock.ReleaseMutex();
+//
+//                    // Lock access to the image buffer to write into.
+//                    pInterfacePixels.LockNext();
+//                    pPointCloud.LockNext();
+//
+//                    // Bring the interface pixel and point cloud array into scope.
+//                    var tInterfacePixels = pInterfacePixels.Next;
+//                    var iPointCloudCount = 0; // Store in pPointCloud.Next.First;
+//                    var tPointCloud = pPointCloud.Next.Second;
+//                    var tPointCloudPixelIndex = pPointCloud.Next.Third;
+//
+//                    // For each pixel in the depth image.
+//                    DepthImagePixel pDepthPixel;
+//                    int iInterfacePtr = 0;
+//                    for (int i = 0, n = pDepthFrame.Width * pDepthFrame.Height; i < n; ++i)
+//                    {
+//                        // Address the depth pixel.
+//                        pDepthPixel = tDepthPixels[i];
+//                        iInterfacePtr = i * 4;
+//
+//                        // If the depth is not known - skip.
+//                        if (!pDepthPixel.IsKnownDepth)
+//                        {
+//                            tInterfacePixels[iInterfacePtr + 0] = 0xFF;
+//                            tInterfacePixels[iInterfacePtr + 1] = 0xFF;
+//                            tInterfacePixels[iInterfacePtr + 2] = 0xFF;
+//                            continue;
+//                        }
+//                        //else if (pDepthPixel.Depth == pSensor.DepthStream.TooFarDepth)
+//                        //{
+//                        //}
+//                        //else if (pDepthPixel.Depth == pSensor.DepthStream.TooNearDepth)
+//                        //{
+//                        //}
+//
+//                        // Is this pixel marked as ignored?
+//                        else if (!tBitArray.Get(i))
+//                        {
+//                            Utilities.ColourUtils.Greyscale(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
+//                            tInterfacePixels[iInterfacePtr + 2] = 0xCC; // Add a red-tint to the ignored greyscale regions.
+//                        }
+//                        
+//
+//                        // This pixel is a valid, normal pixel.  Process with a render stratergy.
+//                        else
+//                        {
+//                            // Add the 3D pixel to the point cloud list.
+//                            tPointCloud[iPointCloudCount].X = tDepthToSkeleton[i].X;
+//                            tPointCloud[iPointCloudCount].Y = tDepthToSkeleton[i].Y;
+//                            tPointCloud[iPointCloudCount].Z = tDepthToSkeleton[i].Z;
+//                            tPointCloudPixelIndex[iPointCloudCount] = iInterfacePtr;
+//                            iPointCloudCount++;
+//
+//
+//                            // Select what we put in the image buffer based on the render stratergy.
+//                            switch (eRenderStrategy)
+//                            {
+//                                case RenderStrategy.ColourAndErrors:
+//                                    {
+//                                        ColorImagePoint pColourIndex = _tDepthToColourIb[i];
+//                                        int iColorInDepthX = pColourIndex.X / this.iColourToDepthDivisor;
+//                                        int iColorInDepthY = pColourIndex.Y / this.iColourToDepthDivisor;
+//                                        if (iColorInDepthX > 0 && iColorInDepthX < iDepthWidth && iColorInDepthY >= 0 && iColorInDepthY < iDepthHeight)
+//                                        {
+//                                            var iIdx = (pColourIndex.X + (pColourIndex.Y * iColourWidth)) * 4;
+//                                            tInterfacePixels[iInterfacePtr + 0] = tColourPixels[iIdx + 0];
+//                                            tInterfacePixels[iInterfacePtr + 1] = tColourPixels[iIdx + 1];
+//                                            tInterfacePixels[iInterfacePtr + 2] = tColourPixels[iIdx + 2];
+//                                        }
+//                                        else
+//                                        {
+//                                            // Write white.
+//                                            tInterfacePixels[iInterfacePtr + 0] = 0xFF;
+//                                            tInterfacePixels[iInterfacePtr + 1] = 0xFF;
+//                                            tInterfacePixels[iInterfacePtr + 2] = 0xFF;
+//                                        }
+//                                    }
+//                                    break;
+//                                case RenderStrategy.GrayscaleDepth:
+//                                    Utilities.ColourUtils.Greyscale(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
+//                                    break;
+//                                case RenderStrategy.RGBDepth:
+//                                    Utilities.ColourUtils.FauxColourRGB(pDepthPixel.Depth, 0, 3000, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
+//                                    break;
+//                                case RenderStrategy.RGBDepthRelative:
+//                                    Utilities.ColourUtils.FauxColourRGB(Utilities.RatcliffPlane.Distance(tPointCloud[iPointCloudCount], tRenderPlane), 0, 3.0, ref tInterfacePixels[iInterfacePtr + 0], ref tInterfacePixels[iInterfacePtr + 1], ref tInterfacePixels[iInterfacePtr + 2]);
+//                                    break;
+//                            }
+//                        }
+//
+//                        // Store the point cloud count.
+//                        pPointCloud.Next.First = iPointCloudCount;
+//                    }
+//
+//                    // Release access to the image and point cloud buffer.
+//                    pInterfacePixels.UnlockNextAndFlip();   // WARNING - this may wait for the UI thread to finsih reading.
+//                    pPointCloud.UnlockNextAndFlip();        // WARNING - this may wait for the point cloud thread to finsih reading.
+//                }
+//            }
+//            #endregion
+//
+//            // Release access to the image buffer.
+//            //pInterfacePixels.UnlockNextAndFlip();   // WARNING - this may wait for the UI thread to finsih reading.
+//            //pPointCloud.UnlockNextAndFlip();        // WARNING - this may wait for the point cloud thread to finsih reading.
+//
+//            // Raise the event which says we are done.
+//            if (OnFrameReady != null)
+//                OnFrameReady(this);
+//
+//            // Signal that the frame has been processed.
+//            _FPSCounter.NewFrame();
+//
+//            // Signal that we have begun streaming.
+//            if (!bStreamedFirstFrame)
+//            {
+//                bStreamedFirstFrame = true;
+//                OnKinectStreamingStarted?.Invoke(this);
+//            }
+//        }
 
 
         /// <summary>
@@ -774,15 +777,18 @@ namespace UbiDisplays.Model
             }
 
             // Get the colour point.
-            ColorImagePoint pColourIndex = tDepthToColourIB[idx];
-            int colorInDepthX = pColourIndex.X / this.iColourToDepthDivisor;
-            int colorInDepthY = pColourIndex.Y / this.iColourToDepthDivisor;
+            var pColourIndex = _tDepthToColourIb[idx];
+            int colorInDepthX = (int) (pColourIndex.X / this.iColourToDepthDivisor);
+            int colorInDepthY = (int) (pColourIndex.Y / this.iColourToDepthDivisor);
             if (colorInDepthX > 0 && colorInDepthX < iDepthWidth && colorInDepthY >= 0 && colorInDepthY < iDepthHeight)
             {
                 var iIdx = (pColourIndex.X + (pColourIndex.Y * iColourWidth)) * 4;
-                pColour.B = tColourPixels[iIdx + 0];
-                pColour.G = tColourPixels[iIdx + 1];
-                pColour.R = tColourPixels[iIdx + 2];
+                if (tColourPixels != null)
+                {
+                    pColour.B = tColourPixels[(int) (iIdx + 0)];
+                    pColour.G = tColourPixels[(int) (iIdx + 1)];
+                    pColour.R = tColourPixels[(int) (iIdx + 2)];
+                }
             }
             else
             {

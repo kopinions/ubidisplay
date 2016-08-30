@@ -1,16 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 using System.Windows.Markup;
 
@@ -28,6 +20,11 @@ namespace UbiDisplays.Interface.Controls
             // Load the XAML.
             InitializeComponent();
         }
+
+
+        public static readonly DependencyProperty LabelProperty =
+            DependencyProperty.Register("Title", typeof(string),
+                typeof(ExplanationPanel), new PropertyMetadata(""));
 
         /// <summary>
         /// Called when this panel is clicked.
@@ -49,7 +46,7 @@ namespace UbiDisplays.Interface.Controls
         /// <summary>
         /// Get or set the main title text (large) on this explanation panel.
         /// </summary>
-        public String Title
+        public string Title
         {
             get
             {
@@ -64,7 +61,7 @@ namespace UbiDisplays.Interface.Controls
         /// <summary>
         /// Get or set the additional text (small) on this explanation panel.
         /// </summary>
-        public String Explanation
+        public string Explanation
         {
             get
             {
